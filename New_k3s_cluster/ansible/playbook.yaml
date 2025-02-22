@@ -1,0 +1,62 @@
+- hosts: k3s
+  become: yes
+  tasks:
+    - name: Installing dependencies
+      apt:
+        name: ['curl', 'git', 'helm']
+        state: present
+        update_cache: yes
+
+    - name: Installing k3s
+      shell: |
+        curl -sfL https://get.k3s.io | sh -
+        systemctl enable --now k3s
+
+    - name: Installing Helm
+      shell: |
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+    - name: Installing ArgoCD
+      shell: |
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm repo update
+        helm install argocd argo/argo-cd --namespace argocd --create-namespace
+
+    - name: Creating RBAC (ServiceAccount, Role, RoleBinding)
+      copy:
+        dest: "/tmp/rbac.yaml"
+        content: |
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: dev-user
+            namespace: default
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: Role
+          metadata:
+            name: dev-role
+            namespace: default
+          rules:
+            - apiGroups: [""]
+              resources: ["pods", "services"]
+              verbs: ["get", "list", "create", "delete"]
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: RoleBinding
+          metadata:
+            name: dev-rolebinding
+            namespace: default
+          subjects:
+            - kind: ServiceAccount
+              name: dev-user
+              namespace: default
+          roleRef:
+            kind: Role
+            name: dev-role
+            apiGroup: rbac.authorization.k8s.io
+      register: rbac_config
+
+    - name: Applying RBAC
+      command: kubectl apply -f /tmp/rbac.yaml
+      when: rbac_config is changed
